@@ -436,89 +436,162 @@
   }
   scene.add(vegetation);
 
-  // Stylized humanoid — rounded, smooth-shaded shapes with soft matte materials,
-  // inspired by low-poly "golden hour" WebGL characters (think Summer Afternoon).
+  // Realistic humanoid — tapered body proportions, two-segment limbs (thigh/shin,
+  // upper-arm/forearm) with hands & shoes, and a painted face texture instead of
+  // flat colored boxes. Shared by the player, AI soldiers, and zombies.
+  function shadeColor(hex, percent){
+    const r = Math.max(0,Math.min(255, ((hex>>16)&0xff) + percent));
+    const g = Math.max(0,Math.min(255, ((hex>>8)&0xff) + percent));
+    const b = Math.max(0,Math.min(255, (hex&0xff) + percent));
+    return (r<<16)|(g<<8)|b;
+  }
+  const faceTextureCache = new Map();
+  function getFaceTexture(skinHex, hairHex){
+    if(faceTextureCache.has(skinHex)) return faceTextureCache.get(skinHex);
+    const cvs = document.createElement('canvas');
+    cvs.width = 128; cvs.height = 128;
+    const ctx = cvs.getContext('2d');
+    const skin = '#'+skinHex.toString(16).padStart(6,'0');
+    const skinDark = '#'+shadeColor(skinHex,-30).toString(16).padStart(6,'0');
+    const grad = ctx.createRadialGradient(64,52,8,64,64,88);
+    grad.addColorStop(0, skin);
+    grad.addColorStop(1, skinDark);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,128,128);
+    // Eyebrows
+    ctx.strokeStyle = 'rgba(35,22,14,0.85)';
+    ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(37,45); ctx.lineTo(56,41); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(72,41); ctx.lineTo(91,45); ctx.stroke();
+    // Eyes (whites + iris)
+    ctx.fillStyle = '#f4f0e8';
+    ctx.beginPath(); ctx.ellipse(47,57,8,5,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(81,57,8,5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#3a2a1c';
+    ctx.beginPath(); ctx.arc(48,57,3.4,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(80,57,3.4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(48,57,1.4,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(80,57,1.4,0,Math.PI*2); ctx.fill();
+    // Nose (soft shading, not a hard shape)
+    ctx.strokeStyle = skinDark; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(64,60); ctx.lineTo(60,76); ctx.lineTo(67,78); ctx.stroke();
+    // Mouth
+    ctx.strokeStyle = '#7a3f30'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(51,91); ctx.quadraticCurveTo(64,97,77,91); ctx.stroke();
+    // Cheek blush
+    ctx.fillStyle = 'rgba(190,90,75,0.14)';
+    ctx.beginPath(); ctx.ellipse(39,73,10,6,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(89,73,10,6,0,0,Math.PI*2); ctx.fill();
+    const tex = new THREE.CanvasTexture(cvs);
+    if('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    faceTextureCache.set(skinHex, tex);
+    return tex;
+  }
+
   function makeHumanoid(colors, clothing='casual', isPlayer=false){
     const g = new THREE.Group();
+    const skinInput = colors.skin !== undefined ? colors.skin : 0xe8b892;
+    const skin = (skinInput && skinInput.isColor) ? skinInput.getHex() : skinInput;
     const softMat = (color, opts={}) => new THREE.MeshStandardMaterial({
-      color, roughness: opts.roughness ?? 0.85, metalness: opts.metalness ?? 0.04, flatShading: false
+      color, roughness: opts.roughness ?? 0.8, metalness: opts.metalness ?? 0.04
     });
 
-    // Rounded, egg-shaped torso instead of a flat box — single smooth-shaded mesh
-    const torso = new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 14), softMat(colors.shirt));
-    torso.scale.set(0.76, 1.05, 0.6);
-    torso.position.y = 1.15;
-    torso.castShadow = true;
-    torso.receiveShadow = true;
+    // Tapered torso (broad shoulders -> narrow waist) + separate pelvis block
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.27,0.21,0.62,10), softMat(colors.shirt,{roughness:0.85}));
+    torso.position.y = 1.36;
+    torso.castShadow = true; torso.receiveShadow = true;
     g.add(torso);
 
-    // Tactical vest for the player, rounded to sit naturally over the torso
+    const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.21,0.18,0.26,10), softMat(colors.pants,{roughness:0.9}));
+    pelvis.position.y = 0.98;
+    pelvis.castShadow = true;
+    g.add(pelvis);
+
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.09,0.1,8), softMat(skin,{roughness:0.6}));
+    neck.position.y = 1.73;
+    neck.castShadow = true;
+    g.add(neck);
+
     if(isPlayer){
-      const vest = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), softMat(0x3f5c3f, {roughness:0.9}));
-      vest.scale.set(0.82, 0.7, 0.66);
-      vest.position.y = 1.3;
+      const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.24,0.46,10), softMat(0x3f5c3f,{roughness:0.92}));
+      vest.position.y = 1.42;
       vest.castShadow = true;
       g.add(vest);
     }
 
-    // Smooth cylindrical limbs — rounded silhouette, no hard box edges
-    const legMat = softMat(colors.pants, {roughness:0.9});
-    const legA = new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.11,0.85,12), legMat);
-    legA.position.set(0.18,0.42,0);
-    legA.castShadow = true;
-    const legB = legA.clone();
-    legB.position.x = -0.18;
-    legB.castShadow = true;
-    g.add(legA,legB);
+    // Two-segment legs (thigh + shin + shoe) grouped under one hip pivot so
+    // existing single-rotation walk-cycle code keeps working unchanged.
+    function makeLeg(pantsColor){
+      const leg = new THREE.Group();
+      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.095,0.08,0.44,8), softMat(pantsColor,{roughness:0.9}));
+      thigh.position.y = -0.22; thigh.castShadow = true;
+      leg.add(thigh);
+      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.058,0.42,8), softMat(pantsColor,{roughness:0.9}));
+      shin.position.y = -0.63; shin.castShadow = true;
+      leg.add(shin);
+      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.09,0.25), softMat(0x1c1712,{roughness:0.6,metalness:0.15}));
+      shoe.position.set(0,-0.89,0.05); shoe.castShadow = true;
+      leg.add(shoe);
+      return leg;
+    }
+    const legA = makeLeg(colors.pants);
+    legA.position.set(0.12, 0.98, 0);
+    const legB = makeLeg(colors.pants);
+    legB.position.set(-0.12, 0.98, 0);
+    g.add(legA, legB);
 
-    const armMat = softMat(colors.sleeve, {roughness:0.9});
-    const armA = new THREE.Mesh(new THREE.CylinderGeometry(0.115,0.1,0.82,12), armMat);
-    armA.position.set(0.52,1.18,0);
-    armA.castShadow = true;
-    const armB = armA.clone();
-    armB.position.x = -0.52;
-    armB.castShadow = true;
-    g.add(armA,armB);
+    // Two-segment arms (upper arm + forearm + hand) under one shoulder pivot
+    function makeArm(sleeveColor){
+      const arm = new THREE.Group();
+      const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.07,0.38,8), softMat(sleeveColor,{roughness:0.9}));
+      upper.position.y = -0.19; upper.castShadow = true;
+      arm.add(upper);
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.05,0.36,8), softMat(skin,{roughness:0.65}));
+      fore.position.y = -0.55; fore.castShadow = true;
+      arm.add(fore);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.058,8,8), softMat(skin,{roughness:0.6}));
+      hand.position.y = -0.75; hand.castShadow = true;
+      arm.add(hand);
+      return arm;
+    }
+    const armA = makeArm(colors.sleeve);
+    armA.position.set(0.32, 1.62, 0);
+    const armB = makeArm(colors.sleeve);
+    armB.position.set(-0.32, 1.62, 0);
+    g.add(armA, armB);
 
-    // Rounded, slightly oversized head — soft skin material catches warm light nicely
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.33, 20, 16), softMat(0xffdcb6, {roughness:0.65, metalness:0}));
-    head.position.y = 2.04;
+    // Head with a painted face (eyes, brows, nose, mouth) instead of flat dots
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.23, 24, 18),
+      new THREE.MeshStandardMaterial({color:0xffffff, map:getFaceTexture(skin), roughness:0.6, metalness:0})
+    );
+    head.position.y = 2.0;
     head.castShadow = true;
     g.add(head);
 
-    // Minimal, friendly face — just soft eye dots, no harsh nose/mouth boxes
-    const eyeMat = softMat(0x2a1e1a, {roughness:0.5});
-    const eyeA = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), eyeMat);
-    eyeA.position.set(0.11, 2.06, 0.3);
-    const eyeB = eyeA.clone();
-    eyeB.position.x = -0.11;
-    g.add(eyeA, eyeB);
-
-    // Soft rounded hair cap (half-sphere) instead of a flat slab
     const hair = new THREE.Mesh(
-      new THREE.SphereGeometry(0.35, 16, 10, 0, Math.PI*2, 0, Math.PI*0.6),
+      new THREE.SphereGeometry(0.245, 16, 10, 0, Math.PI*2, 0, Math.PI*0.56),
       softMat(colors.hair, {roughness:0.85})
     );
-    hair.position.y = 2.18;
+    hair.position.y = 2.09;
     hair.castShadow = true;
     g.add(hair);
 
-    // Backpack for the player, rounded to match the rest of the silhouette
     if(isPlayer){
-      const backpack = new THREE.Mesh(new THREE.SphereGeometry(0.4, 14, 10), softMat(0x35452e, {roughness:0.9}));
-      backpack.scale.set(0.62, 0.85, 0.42);
-      backpack.position.set(0, 1.2, -0.33);
+      const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.3,0.48,0.2), softMat(0x35452e,{roughness:0.9}));
+      backpack.position.set(0, 1.42, -0.27);
       backpack.castShadow = true;
       g.add(backpack);
     }
 
     const weaponAnchor = new THREE.Group();
-    weaponAnchor.position.set(0.6,1.18,0);
+    weaponAnchor.position.set(0.4, 1.5, 0.05);
     g.add(weaponAnchor);
 
     g.userData = {
       torso,legA,legB,armA,armB,head,weaponAnchor,walkT:0,
-      hw:0.4, hh:1.25, hd:0.3, alive:true, type:'humanoid'
+      hw:0.32, hh:1.3, hd:0.28, alive:true, type:'humanoid'
     };
     return g;
   }
@@ -528,7 +601,8 @@
     shirt:0x5c7a5c,
     pants:0x3a4a3a,
     sleeve:0x5c7a5c,
-    hair:0x4a3320
+    hair:0x4a3320,
+    skin:0xd9a878
   }, 'tactical', true);
   player.position.set(0,0,8); 
   scene.add(player);
@@ -807,7 +881,8 @@
         shirt:new THREE.Color().setHSL(rand(0,1),0.45,0.52),
         pants:new THREE.Color().setHSL(rand(0.08,0.18),0.35,0.3),
         sleeve:new THREE.Color().setHSL(rand(0,1),0.45,0.52),
-        hair:new THREE.Color().setHSL(rand(0,1),0.4,0.25)
+        hair:new THREE.Color().setHSL(rand(0.02,0.09),rand(0.25,0.55),rand(0.12,0.32)),
+        skin:new THREE.Color().setHSL(rand(0.05,0.09),rand(0.35,0.55),rand(0.35,0.7))
       };
       
       const ai=makeHumanoid(colors, 'tactical');
@@ -859,7 +934,8 @@
         shirt:0x2d4a2d,
         pants:0x1a2a1a,
         sleeve:0x2d4a2d,
-        hair:0x0a0a0a
+        hair:0x0a0a0a,
+        skin:0x8a9c7a
       });
       z.userData.zombie=true; 
       z.userData.hp=rand(30,50); 
@@ -1871,19 +1947,36 @@
       return;
     }
     
-    // On foot movement
+    // On-foot movement — camera-relative, like a real 3rd-person action game:
+    // W always moves the way the camera is currently facing, not a fixed world axis.
+    let inF = 0, inR = 0;
+    if(keys['ArrowUp'] || keys['KeyW']) inF += 1;
+    if(keys['ArrowDown'] || keys['KeyS']) inF -= 1;
+    if(keys['ArrowRight'] || keys['KeyD']) inR += 1;
+    if(keys['ArrowLeft'] || keys['KeyA']) inR -= 1;
+
+    const inputMag = Math.hypot(inF, inR);
     let mx = 0, mz = 0;
-    if(keys['ArrowUp'] || keys['KeyW']) mz -= 1;
-    if(keys['ArrowDown'] || keys['KeyS']) mz += 1;
-    if(keys['ArrowLeft'] || keys['KeyA']) mx -= 1;
-    if(keys['ArrowRight'] || keys['KeyD']) mx += 1;
-    
-    const mag = Math.hypot(mx, mz) || 1;
-    mx /= mag; mz /= mag;
+    if(inputMag > 0){
+      inF /= inputMag; inR /= inputMag;
+      // Forward/right basis derived from the camera's current yaw
+      const Fx = Math.sin(yaw), Fz = Math.cos(yaw);
+      const Rx = Math.cos(yaw), Rz = -Math.sin(yaw);
+      mx = Fx*inF + Rx*inR;
+      mz = Fz*inF + Rz*inR;
+    }
     
     const speed = 5;
     player.position.x += mx * speed * dt;
     player.position.z += mz * speed * dt;
+    
+    // Rotate the player body to actually face the direction they're walking
+    if(inputMag > 0.01){
+      const targetHeading = Math.atan2(mx, mz);
+      let da = targetHeading - player.rotation.y;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      player.rotation.y += da * Math.min(1, dt * 12);
+    }
     
     // Jumping
     if(keys['Space'] && player.position.y <= 0.01 && !isJumping){
