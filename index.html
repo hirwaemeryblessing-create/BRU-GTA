@@ -187,6 +187,8 @@
   let inHeli = false, currentHeli = null;
   let weapon = 'rifle';
   let rocketCooldown = 0;
+  let crouching = false;
+  let fireKick = 0; // decaying recoil offset applied to the gun arm
 
   // Helpers
   const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
@@ -520,44 +522,61 @@
       g.add(vest);
     }
 
-    // Two-segment legs (thigh + shin + shoe) grouped under one hip pivot so
-    // existing single-rotation walk-cycle code keeps working unchanged.
+    // Two-segment legs: hip pivot (leg) -> thigh, then a separate knee pivot
+    // group -> shin + shoe, so the knee can bend independently of the hip swing.
     function makeLeg(pantsColor){
-      const leg = new THREE.Group();
+      const leg = new THREE.Group(); // hip pivot
       const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.095,0.08,0.44,8), softMat(pantsColor,{roughness:0.9}));
       thigh.position.y = -0.22; thigh.castShadow = true;
       leg.add(thigh);
+
+      const knee = new THREE.Group(); // knee pivot, sits at the base of the thigh
+      knee.position.y = -0.44;
       const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.058,0.42,8), softMat(pantsColor,{roughness:0.9}));
-      shin.position.y = -0.63; shin.castShadow = true;
-      leg.add(shin);
+      shin.position.y = -0.21; shin.castShadow = true;
+      knee.add(shin);
       const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.09,0.25), softMat(0x1c1712,{roughness:0.6,metalness:0.15}));
-      shoe.position.set(0,-0.89,0.05); shoe.castShadow = true;
-      leg.add(shoe);
-      return leg;
+      shoe.position.set(0,-0.47,0.05); shoe.castShadow = true;
+      knee.add(shoe);
+      leg.add(knee);
+
+      return {hip:leg, knee};
     }
-    const legA = makeLeg(colors.pants);
+    const legAParts = makeLeg(colors.pants);
+    const legA = legAParts.hip, kneeA = legAParts.knee;
     legA.position.set(0.12, 0.98, 0);
-    const legB = makeLeg(colors.pants);
+    const legBParts = makeLeg(colors.pants);
+    const legB = legBParts.hip, kneeB = legBParts.knee;
     legB.position.set(-0.12, 0.98, 0);
     g.add(legA, legB);
 
-    // Two-segment arms (upper arm + forearm + hand) under one shoulder pivot
+    // Two-segment arms: shoulder pivot (arm) -> upper arm, then a separate
+    // elbow pivot group -> forearm + hand, so the elbow can bend on its own.
     function makeArm(sleeveColor){
-      const arm = new THREE.Group();
+      const arm = new THREE.Group(); // shoulder pivot
       const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.07,0.38,8), softMat(sleeveColor,{roughness:0.9}));
       upper.position.y = -0.19; upper.castShadow = true;
       arm.add(upper);
+
+      const elbow = new THREE.Group(); // elbow pivot, sits at the base of the upper arm
+      elbow.position.y = -0.38;
       const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.05,0.36,8), softMat(skin,{roughness:0.65}));
-      fore.position.y = -0.55; fore.castShadow = true;
-      arm.add(fore);
+      fore.position.y = -0.18; fore.castShadow = true;
+      elbow.add(fore);
       const hand = new THREE.Mesh(new THREE.SphereGeometry(0.058,8,8), softMat(skin,{roughness:0.6}));
-      hand.position.y = -0.75; hand.castShadow = true;
-      arm.add(hand);
-      return arm;
+      hand.position.y = -0.37; hand.castShadow = true;
+      elbow.add(hand);
+      arm.add(elbow);
+
+      return {shoulder:arm, elbow, hand};
     }
-    const armA = makeArm(colors.sleeve);
+    const armAParts = makeArm(colors.sleeve);
+    const armA = armAParts.shoulder, elbowA = armAParts.elbow;
     armA.position.set(0.32, 1.62, 0);
-    const armB = makeArm(colors.sleeve);
+    armA.rotation.x = -1.15; // default aim-ready stance for the gun arm
+    elbowA.rotation.x = -0.55;
+    const armBParts = makeArm(colors.sleeve);
+    const armB = armBParts.shoulder, elbowB = armBParts.elbow;
     armB.position.set(-0.32, 1.62, 0);
     g.add(armA, armB);
 
@@ -586,16 +605,41 @@
     }
 
     const weaponAnchor = new THREE.Group();
-    weaponAnchor.position.set(0.4, 1.5, 0.05);
-    g.add(weaponAnchor);
+    weaponAnchor.position.set(0.12, -0.42, 0.1);
+    elbowA.add(weaponAnchor);
 
     g.userData = {
-      torso,legA,legB,armA,armB,head,weaponAnchor,walkT:0,
+      torso,legA,legB,armA,armB,kneeA,kneeB,elbowA,elbowB,head,weaponAnchor,walkT:0,
       hw:0.32, hh:1.3, hd:0.28, alive:true, type:'humanoid'
     };
     return g;
   }
   
+  // Shared walk/run cycle: bends knees on the swing phase (knees only bend
+  // forward, never back) and elbows in the opposite phase to the legs, so
+  // limbs read as jointed rather than rigid swinging poles. `aimingArmA`
+  // lets a shooter (player/aiming AI) keep the gun arm locked on target
+  // while everything else still animates naturally.
+  const AIM_ARM_BASE = -1.15, AIM_ELBOW_BASE = -0.55;
+  function animateGait(ud, t, amp, opts={}){
+    const armAmp = amp * 0.6;
+    ud.legA.rotation.x = Math.sin(t) * amp;
+    ud.legB.rotation.x = Math.sin(t + Math.PI) * amp;
+    ud.kneeA.rotation.x = Math.max(0, Math.sin(t + Math.PI*0.5)) * amp * 1.6;
+    ud.kneeB.rotation.x = Math.max(0, Math.sin(t + Math.PI*1.5)) * amp * 1.6;
+
+    if(opts.aimingArmA){
+      // Gun arm stays aimed; only the off-hand swings for natural counterbalance
+      ud.armB.rotation.x = Math.sin(t) * armAmp;
+      ud.elbowB.rotation.x = Math.max(0, -Math.sin(t)) * armAmp * 0.8;
+    } else {
+      ud.armA.rotation.x = Math.sin(t + Math.PI) * armAmp;
+      ud.armB.rotation.x = Math.sin(t) * armAmp;
+      ud.elbowA.rotation.x = Math.max(0, -Math.sin(t + Math.PI)) * armAmp * 0.8;
+      ud.elbowB.rotation.x = Math.max(0, -Math.sin(t)) * armAmp * 0.8;
+    }
+  }
+
   // Enhanced Player
   const player = makeHumanoid({
     shirt:0x5c7a5c,
@@ -655,56 +699,123 @@
     player.userData.weaponAnchor.add(weapon==='rifle'?assaultRifleModel:rocketLauncherModel);
   }
 
-  // Enhanced Vehicles
+  // Enhanced Vehicles — realistic GTA-style proportions: tapered chassis with a
+  // lower hood/trunk than cabin, real glass, lit headlamps/taillights, and
+  // wheels with visible dark tires + metallic rims (instead of one flat cylinder).
+  const carPaintCache = new Map();
+  function carPaint(color){
+    if(carPaintCache.has(color)) return carPaintCache.get(color);
+    const m = new THREE.MeshStandardMaterial({color, roughness:0.35, metalness:0.55});
+    carPaintCache.set(color, m);
+    return m;
+  }
+  const carGlassMat = new THREE.MeshStandardMaterial({color:0x1c2733, roughness:0.15, metalness:0.2, transparent:true, opacity:0.75});
+  const carTireMat = new THREE.MeshStandardMaterial({color:0x141414, roughness:0.85, metalness:0.05});
+  const carRimMat = new THREE.MeshStandardMaterial({color:0xc9ccd1, roughness:0.35, metalness:0.85});
+  const carHeadlightMat = new THREE.MeshStandardMaterial({color:0xfff6dd, emissive:0xfff2c2, emissiveIntensity:0.9, roughness:0.3});
+  const carTaillightMat = new THREE.MeshStandardMaterial({color:0xff2a2a, emissive:0xaa0000, emissiveIntensity:0.7, roughness:0.4});
+  const carBumperMat = new THREE.MeshStandardMaterial({color:0x1a1d21, roughness:0.5, metalness:0.4});
+
   function makeCar(color=0x33aa66, type='sedan'){
     const car = new THREE.Group();
-    
-    let bodySize = type === 'truck' ? [2.8,0.7,1.8] : [2.4,0.6,1.4];
-    
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(...bodySize), 
-      new THREE.MeshLambertMaterial({color})
-    );
-    body.position.y=0.4;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    
-    const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(1.4,0.6,1.2), 
-      new THREE.MeshLambertMaterial({color:0x2a3540, transparent:true, opacity:0.9})
-    );
-    cabin.position.set(0.15,0.8,0);
-    cabin.castShadow = true;
-    
-    // Wheels
-    const wheelMat = new THREE.MeshLambertMaterial({color:0x1a1a1a});
+    const paint = carPaint(color);
+    const isTruck = type === 'truck';
+
+    // Overall footprint
+    const len = isTruck ? 3.2 : 2.5;
+    const width = isTruck ? 1.7 : 1.4;
+    const hoodLen = len * 0.34;
+
+    // Lower chassis slab (keeps everything grounded, low ride height)
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(len*0.96, 0.16, width*0.94), carBumperMat);
+    chassis.position.y = 0.28;
+    chassis.castShadow = true;
+    car.add(chassis);
+
+    // Main body: hood (front, lower) + cabin box (middle, taller) + trunk (rear, lower)
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(hoodLen, isTruck?0.55:0.42, width), paint);
+    hood.position.set(len/2 - hoodLen/2, isTruck?0.62:0.55, 0);
+    hood.castShadow = true; hood.receiveShadow = true;
+    car.add(hood);
+
+    const trunkLen = hoodLen * 0.85;
+    const trunk = new THREE.Mesh(new THREE.BoxGeometry(trunkLen, isTruck?0.7:0.42, width), paint);
+    trunk.position.set(-len/2 + trunkLen/2, isTruck?0.78:0.55, 0);
+    trunk.castShadow = true; trunk.receiveShadow = true;
+    car.add(trunk);
+
+    const cabinLen = len - hoodLen - trunkLen;
+    const cabinH = isTruck ? 0.62 : 0.5;
+    const cabinBody = new THREE.Mesh(new THREE.BoxGeometry(cabinLen, cabinH, width), paint);
+    cabinBody.position.set(-(hoodLen - trunkLen)/2, isTruck?0.9:0.78, 0);
+    cabinBody.castShadow = true; cabinBody.receiveShadow = true;
+    car.add(cabinBody);
+
+    // Greenhouse (glass cabin, narrower + shorter than the cabin box, sits on top)
+    const glassW = width * 0.86;
+    const glassH = cabinH * 0.72;
+    const glassLen = cabinLen * 0.92;
+    const greenhouse = new THREE.Mesh(new THREE.BoxGeometry(glassLen, glassH, glassW), carGlassMat);
+    greenhouse.position.set(cabinBody.position.x, cabinBody.position.y + cabinH/2 + glassH/2 - 0.03, 0);
+    greenhouse.castShadow = true;
+    car.add(greenhouse);
+
+    // Headlights (front) & taillights (rear)
+    const lightY = hood.position.y;
+    const lightGeo = new THREE.BoxGeometry(0.06, 0.14, 0.22);
+    [width/2 - 0.16, -(width/2 - 0.16)].forEach(zPos=>{
+      const hl = new THREE.Mesh(lightGeo, carHeadlightMat);
+      hl.position.set(len/2 - 0.03, lightY, zPos);
+      car.add(hl);
+      const tl = new THREE.Mesh(lightGeo, carTaillightMat);
+      tl.position.set(-len/2 + 0.03, trunk.position.y, zPos);
+      car.add(tl);
+    });
+
+    // Front & rear bumpers
+    const bumperF = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.28, width*1.02), carBumperMat);
+    bumperF.position.set(len/2, 0.32, 0);
+    car.add(bumperF);
+    const bumperR = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.28, width*1.02), carBumperMat);
+    bumperR.position.set(-len/2, 0.32, 0);
+    car.add(bumperR);
+
+    // Wheels: dark tire torus-like cylinder + smaller metallic rim, plus a
+    // spinning hubGroup so future wheel-rotation animation has a clean pivot.
     function wheel(x,z){
-      const w=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,0.4,10), wheelMat); 
-      w.rotation.z=Math.PI/2; 
-      w.position.set(x,0.3,z); 
-      w.castShadow = true;
-      return w;
+      const hub = new THREE.Group();
+      const r = isTruck ? 0.34 : 0.3;
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.24, 14), carTireMat);
+      tire.rotation.x = Math.PI/2; // axle along z (side-to-side) so it rolls forward correctly
+      tire.castShadow = true;
+      hub.add(tire);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(r*0.55, r*0.55, 0.26, 8), carRimMat);
+      rim.rotation.x = Math.PI/2;
+      hub.add(rim);
+      hub.position.set(x, r, z);
+      return hub;
     }
-    
-    const wheelOffset = type === 'truck' ? 1.0 : 0.8;
-    const wheelSpread = 0.7;
-    
-    car.add(body,cabin,
-      wheel(wheelOffset,wheelSpread),wheel(-wheelOffset,wheelSpread),
-      wheel(wheelOffset,-wheelSpread),wheel(-wheelOffset,-wheelSpread)
-    );
-    
+
+    const wheelOffsetX = len/2 - (isTruck?0.75:0.62);
+    const wheelZ = width/2 + 0.04;
+    const wFL = wheel(wheelOffsetX, wheelZ);
+    const wFR = wheel(wheelOffsetX, -wheelZ);
+    const wRL = wheel(-wheelOffsetX, wheelZ);
+    const wRR = wheel(-wheelOffsetX, -wheelZ);
+    car.add(wFL, wFR, wRL, wRR);
+
     car.userData = {
       type:'car',
       speed:0,
       yaw:0,
-      hp:type === 'truck' ? 150 : 100,
-      maxHp:type === 'truck' ? 150 : 100,
-      hw:bodySize[0]/2,
-      hh:bodySize[1]/2,
-      hd:bodySize[2]/2,
+      hp:isTruck ? 150 : 100,
+      maxHp:isTruck ? 150 : 100,
+      hw:len/2,
+      hh:0.5,
+      hd:width/2,
       driver:null,
-      carType:type
+      carType:type,
+      wheels:[wFL,wFR,wRL,wRR]
     };
     return car;
   }
@@ -743,52 +854,91 @@
     }
   }
 
-  // Enhanced Helicopter
+  // Enhanced Helicopter — realistic tapered fuselage, a real glass cockpit
+  // bubble, skids on struts, a tail boom that narrows into a fin, and a
+  // spinning tail rotor in addition to the main rotor.
   function makeHeli(type='transport'){
     const heli = new THREE.Group();
-    
-    let bodySize = type === 'attack' ? [2.0,1.0,4] : [3.0,1.5,6];
-    
+    const isAttack = type === 'attack';
+    const hullColor = isAttack ? 0x3d4a3d : 0x5a6bff;
+    const hullMat = new THREE.MeshStandardMaterial({color:hullColor, roughness:0.4, metalness:0.5});
+    const glassMat = new THREE.MeshStandardMaterial({color:0x1c2733, roughness:0.1, metalness:0.3, transparent:true, opacity:0.6});
+    const darkMat = new THREE.MeshStandardMaterial({color:0x24272b, roughness:0.6, metalness:0.4});
+    const bladeMat = new THREE.MeshStandardMaterial({color:0xcfd2d6, roughness:0.5, metalness:0.6});
+
+    let bodySize = isAttack ? [2.0,1.0,4] : [3.0,1.5,6];
+
+    // Main fuselage — tapered nose-to-tail using a stretched sphere instead of a box
     const body = new THREE.Mesh(
-      new THREE.BoxGeometry(...bodySize), 
-      new THREE.MeshLambertMaterial({color:type === 'attack' ? 0x3d4a3d : 0x5a6bff})
+      new THREE.SphereGeometry(1, 16, 12),
+      hullMat
     );
+    body.scale.set(bodySize[2]/2, bodySize[1]/2, bodySize[0]/2);
     body.castShadow = true;
     body.receiveShadow = true;
-    
-    const tail = new THREE.Mesh(
-      new THREE.BoxGeometry(0.6,0.6,3), 
-      new THREE.MeshLambertMaterial({color:type === 'attack' ? 0x3d4a3d : 0x5a6bff})
-    );
+    heli.add(body);
+
+    // Glass cockpit bubble at the nose
+    const cockpit = new THREE.Mesh(new THREE.SphereGeometry(bodySize[0]*0.42, 14, 10, 0, Math.PI*2, 0, Math.PI*0.6), glassMat);
+    cockpit.rotation.x = Math.PI;
+    cockpit.position.set(0, bodySize[1]*0.08, bodySize[2]*0.36);
+    cockpit.castShadow = true;
+    heli.add(cockpit);
+
+    // Tail boom narrowing to a small fin
+    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.14,3,10), hullMat);
+    tail.rotation.x = Math.PI/2;
     tail.position.set(0,0,-4);
     tail.castShadow = true;
-    
-    const skids = new THREE.Mesh(
-      new THREE.BoxGeometry(bodySize[2]-1,0.2,0.2), 
-      new THREE.MeshLambertMaterial({color:0x666})
-    );
-    skids.position.set(0,-0.8,0);
-    skids.castShadow = true;
-    
-    const rotor = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1,0.1,0.2,8), 
-      new THREE.MeshLambertMaterial({color:0x1a1a1a})
-    );
-    rotor.position.y=bodySize[1]/2 + 0.2;
+    heli.add(tail);
+
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.7,0.9), hullMat);
+    fin.position.set(0,0.35,-5.4);
+    fin.castShadow = true;
+    heli.add(fin);
+
+    // Tail rotor (small spinning blade on the fin, perpendicular to main rotor)
+    const tailRotorHub = new THREE.Group();
+    tailRotorHub.position.set(0.16,0.35,-5.7);
+    const tailBlade = new THREE.Mesh(new THREE.BoxGeometry(0.04,0.9,0.09), bladeMat);
+    tailRotorHub.add(tailBlade);
+    heli.add(tailRotorHub);
+
+    // Skids on angled struts instead of a single floating bar
+    const skidBar = new THREE.BoxGeometry(bodySize[2]-1,0.12,0.12);
+    [-1,1].forEach(side=>{
+      const skid = new THREE.Mesh(skidBar, darkMat);
+      skid.position.set(0,-0.9, side*(bodySize[0]*0.5));
+      skid.castShadow = true;
+      heli.add(skid);
+      [-1,1].forEach(dir=>{
+        const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.7,6), darkMat);
+        strut.position.set(dir*bodySize[2]*0.22, -0.5, side*(bodySize[0]*0.5));
+        strut.rotation.z = dir*0.25;
+        strut.castShadow = true;
+        heli.add(strut);
+      });
+    });
+
+    // Main rotor hub + two crossed blades (reads as a spinning disc at speed)
+    const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,0.25,10), darkMat);
+    rotor.position.y = bodySize[1]/2 + 0.25;
     rotor.castShadow = true;
-    
-    const blade = new THREE.Mesh(
-      new THREE.BoxGeometry(bodySize[2]*1.2,0.08,0.3), 
-      new THREE.MeshLambertMaterial({color:0xcccccc})
-    );
-    blade.position.y=bodySize[1]/2 + 0.25;
-    blade.castShadow = true;
-    
-    heli.add(body,tail,skids,rotor,blade);
+    heli.add(rotor);
+
+    const bladeAssembly = new THREE.Group();
+    bladeAssembly.position.y = bodySize[1]/2 + 0.32;
+    const blade1 = new THREE.Mesh(new THREE.BoxGeometry(bodySize[2]*1.25,0.06,0.28), bladeMat);
+    const blade2 = new THREE.Mesh(new THREE.BoxGeometry(bodySize[2]*1.25,0.06,0.28), bladeMat);
+    blade2.rotation.y = Math.PI/2;
+    blade1.castShadow = true; blade2.castShadow = true;
+    bladeAssembly.add(blade1, blade2);
+    heli.add(bladeAssembly);
+
     heli.userData = {
       type:'heli',
-      hp:type === 'attack' ? 120 : 100,
-      maxHp:type === 'attack' ? 120 : 100,
+      hp:isAttack ? 120 : 100,
+      maxHp:isAttack ? 120 : 100,
       hw:bodySize[2]/2, 
       hh:bodySize[1]/2, 
       hd:bodySize[0]/2, 
@@ -796,7 +946,8 @@
       vy:0, 
       yawVel:0,
       heliType:type,
-      blade:blade
+      blade:bladeAssembly,
+      tailBlade:tailRotorHub
     };
     return heli;
   }
@@ -1103,7 +1254,26 @@
   }
 
   // Projectiles
-  const BULLETS=[], ROCKETS=[], EXPLOSIONS=[];
+  const BULLETS=[], ROCKETS=[], EXPLOSIONS=[], MUZZLE_FLASHES=[];
+
+  function spawnMuzzleFlash(pos){
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13,8,8),
+      new THREE.MeshBasicMaterial({color:0xffe28a, transparent:true, opacity:0.95})
+    );
+    flash.position.copy(pos);
+    flash.userData = {life:0.06, maxLife:0.06};
+    scene.add(flash);
+    MUZZLE_FLASHES.push(flash);
+  }
+  function muzzleFlashUpdate(dt){
+    for(let i=MUZZLE_FLASHES.length-1;i>=0;i--){
+      const f = MUZZLE_FLASHES[i];
+      f.userData.life -= dt;
+      if(f.userData.life<=0){ scene.remove(f); MUZZLE_FLASHES.splice(i,1); continue; }
+      f.material.opacity = f.userData.life / f.userData.maxLife;
+    }
+  }
   
   function spawnBullet(pos,dir,speed,dmg,from='player'){
     const s=new THREE.Mesh(
@@ -1264,6 +1434,10 @@
       spawnRocket(muzzlePos, forward, 25, 200, 5, 'player'); 
       rocketCooldown = 3.0;
     }
+    if(!onCar && !inHeli){
+      spawnMuzzleFlash(muzzlePos);
+      fireKick = 0.3; // arm/gun kicks up briefly, decays each frame
+    }
   }
 
   // Pickup Collection
@@ -1365,11 +1539,12 @@
       // Animation
       const t = performance.now() * 0.001 * 2;
       const amp = target ? 0.6 : 0.2;
-      
-      ai.userData.legA.rotation.x = Math.sin(t + index) * amp;
-      ai.userData.legB.rotation.x = Math.sin(t + index + Math.PI) * amp;
-      ai.userData.armA.rotation.x = Math.sin(t + index + Math.PI) * amp * 0.6;
-      ai.userData.armB.rotation.x = Math.sin(t + index) * amp * 0.6;
+      animateGait(ai.userData, t + index, amp, {aimingArmA: !!target});
+      if(target){
+        // Point the gun arm roughly toward the target instead of leaving it rigid
+        ai.userData.armA.rotation.x = AIM_ARM_BASE;
+        ai.userData.elbowA.rotation.x = AIM_ELBOW_BASE;
+      }
       
       // Vehicle AI
       if(Math.random() < 0.0008 && !ai.userData.inVehicle){
@@ -1435,10 +1610,7 @@
       // Animation
       const t = performance.now() * 0.001 * 3;
       const amp = 0.7;
-      z.userData.legA.rotation.x = Math.sin(t + index) * amp;
-      z.userData.legB.rotation.x = Math.sin(t + index + Math.PI) * amp;
-      z.userData.armA.rotation.x = Math.sin(t + index + Math.PI) * amp * 0.7;
-      z.userData.armB.rotation.x = Math.sin(t + index) * amp * 0.7;
+      animateGait(z.userData, t + index, amp);
       
       // Building attacks
       if(Math.random() < 0.002){
@@ -1496,6 +1668,13 @@
       const vz = Math.cos(car.userData.yaw) * car.userData.speed * dt;
       car.position.x += vx;
       car.position.z += vz;
+
+      // Spin wheels proportional to speed (realistic rolling motion)
+      if(car.userData.wheels){
+        const wheelRadius = car.userData.carType === 'truck' ? 0.34 : 0.3;
+        const spin = (car.userData.speed * dt) / wheelRadius;
+        car.userData.wheels.forEach(w => { w.rotation.z -= spin; });
+      }
       
       // Collision damage
       const speedSq = car.userData.speed * car.userData.speed;
@@ -1541,6 +1720,7 @@
     
     // Rotor animation
     if(h.userData.blade) h.userData.blade.rotation.y += dt * 15;
+    if(h.userData.tailBlade) h.userData.tailBlade.rotation.x += dt * 20;
     
     // Controls
     if(keys['KeyW']) h.userData.vy += 15 * dt;
@@ -1947,13 +2127,18 @@
       return;
     }
     
-    // On-foot movement — camera-relative, like a real 3rd-person action game:
-    // W always moves the way the camera is currently facing, not a fixed world axis.
+    // On-foot movement — camera-relative, GTA free-aim style:
+    // the player's body always turns to match where the mouse/camera is
+    // looking, and WASD is forward/left/back/right relative to THAT facing.
+    let da = yaw - player.rotation.y;
+    da = Math.atan2(Math.sin(da), Math.cos(da));
+    player.rotation.y += da * Math.min(1, dt * 14);
+
     let inF = 0, inR = 0;
-    if(keys['ArrowUp'] || keys['KeyW']) inF += 1;
-    if(keys['ArrowDown'] || keys['KeyS']) inF -= 1;
-    if(keys['ArrowRight'] || keys['KeyD']) inR += 1;
-    if(keys['ArrowLeft'] || keys['KeyA']) inR -= 1;
+    if(keys['ArrowUp'] || keys['KeyW']) inF += 1;   // W = forward
+    if(keys['ArrowDown'] || keys['KeyS']) inF -= 1; // S = backward
+    if(keys['ArrowRight'] || keys['KeyD']) inR += 1; // D = right
+    if(keys['ArrowLeft'] || keys['KeyA']) inR -= 1;  // A = left
 
     const inputMag = Math.hypot(inF, inR);
     let mx = 0, mz = 0;
@@ -1965,21 +2150,20 @@
       mx = Fx*inF + Rx*inR;
       mz = Fz*inF + Rz*inR;
     }
-    
-    const speed = 5;
+
+    // Crouch (hold C) and sprint (hold Shift) — mutually exclusive, crouch wins
+    crouching = !!keys['KeyC'];
+    const sprinting = !crouching && (keys['ShiftLeft'] || keys['ShiftRight']) && inputMag > 0;
+    const speed = crouching ? 2.2 : (sprinting ? 8.5 : 5);
     player.position.x += mx * speed * dt;
     player.position.z += mz * speed * dt;
+
+    // Crouch visually lowers the player's hips and camera
+    const crouchTarget = crouching ? 0.42 : 0;
+    player.userData.crouchAmt = lerp(player.userData.crouchAmt || 0, crouchTarget, Math.min(1, dt*10));
     
-    // Rotate the player body to actually face the direction they're walking
-    if(inputMag > 0.01){
-      const targetHeading = Math.atan2(mx, mz);
-      let da = targetHeading - player.rotation.y;
-      da = Math.atan2(Math.sin(da), Math.cos(da));
-      player.rotation.y += da * Math.min(1, dt * 12);
-    }
-    
-    // Jumping
-    if(keys['Space'] && player.position.y <= 0.01 && !isJumping){
+    // Jumping (disabled while crouched, like most GTA-style games)
+    if(keys['Space'] && !crouching && player.position.y <= 0.01 && !isJumping){
       yVel = 6;
       isJumping = true;
     }
@@ -1992,26 +2176,42 @@
       isJumping = false;
     }
     
-    // Third-person camera
-    const behind = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(6);
+    // Third-person camera — orbits with the mouse, pulls in and drops a
+    // little when crouched
+    const camDist = crouching ? 5 : 6;
+    const behind = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(camDist);
     const cameraTarget = new THREE.Vector3(
       player.position.x - behind.x,
-      player.position.y + 4 - pitch * 2,
+      player.position.y + (crouching ? 3.2 : 4) - pitch * 2,
       player.position.z - behind.z
     );
     
     camera.position.lerp(cameraTarget, 0.15);
-    camera.lookAt(player.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
+    camera.lookAt(player.position.clone().add(new THREE.Vector3(0, crouching ? 1.0 : 1.5, 0)));
+
+    // Gun arm always tracks the camera's pitch (aims where you're looking),
+    // with a quick recoil kick on fire that decays back to the aim pose.
+    fireKick = Math.max(0, fireKick - dt * 1.8);
+    player.userData.armA.rotation.x = AIM_ARM_BASE - pitch*0.9 - fireKick;
+    player.userData.elbowA.rotation.x = AIM_ELBOW_BASE - fireKick*0.5;
     
-    // Animation
+    // Animation — walk cycle speeds/amplitude scale with sprint/crouch, and
+    // the off-hand still swings naturally while the gun arm stays aimed.
     const moving = (Math.abs(mx) + Math.abs(mz)) > 0.01;
-    const t = performance.now() * 0.001 * (moving ? 8 : 2);
-    const amp = moving ? 0.6 : 0.15;
-    
-    player.userData.legA.rotation.x = Math.sin(t) * amp;
-    player.userData.legB.rotation.x = Math.sin(t + Math.PI) * amp;
-    player.userData.armA.rotation.x = Math.sin(t + Math.PI) * amp * 0.6;
-    player.userData.armB.rotation.x = Math.sin(t) * amp * 0.6;
+    const gaitRate = crouching ? 4 : (sprinting ? 12 : 8);
+    const gaitAmp = crouching ? 0.35 : (sprinting ? 0.9 : 0.6);
+    const t = performance.now() * 0.001 * (moving ? gaitRate : 2);
+    const amp = moving ? gaitAmp : 0.12;
+    animateGait(player.userData, t, amp, {aimingArmA:true});
+
+    // Crouch bends both knees at rest too (a real crouch, not just a slowdown)
+    const crouchBend = player.userData.crouchAmt * 1.4;
+    player.userData.kneeA.rotation.x += crouchBend;
+    player.userData.kneeB.rotation.x += crouchBend;
+    player.userData.legA.rotation.x += player.userData.crouchAmt * 0.3;
+    player.userData.legB.rotation.x += player.userData.crouchAmt * 0.3;
+
+    document.getElementById('modeTxt').textContent = crouching ? 'Crouching' : (sprinting ? 'Sprinting' : 'On Foot');
   }
 
   // Minimap
