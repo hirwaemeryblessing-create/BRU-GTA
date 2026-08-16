@@ -76,6 +76,7 @@
     <div class="row"><div>Health</div><div id="hpTxt">100%</div></div>
     <div class="bar ok"><div id="hpbar" style="width: 100%;"></div></div>
     <div class="row"><div>Kills</div><div id="killsTxt">0</div></div>
+    <div class="row" style="align-items:flex-start"><div>Mission</div><div id="missionTxt" style="text-align:right;max-width:150px;font-size:12px">—</div></div>
   </div>
   <div class="card" id="weapon">
     <div>Weapon: <b id="wepName">Rifle</b></div>
@@ -89,7 +90,8 @@
 <div id="controls" class="card">
   <div style="font-weight:700;margin-bottom:8px">Controls</div>
   <div style="font-size:14px;line-height:1.4">
-    <b>Move:</b> <kbd>WASD</kbd>, <kbd>Mouse</kbd> look, <kbd>Space</kbd> jump<br>
+    <b>Move:</b> <kbd>WASD</kbd>, <kbd>Mouse</kbd> look/aim, <kbd>Space</kbd> jump<br>
+    <b>Stance:</b> <kbd>Shift</kbd> sprint, <kbd>C</kbd> crouch<br>
     <b>Vehicles:</b> <kbd>E</kbd> enter/exit, <kbd>Arrows</kbd> drive<br>
     <b>Combat:</b> <kbd>Click</kbd> fire, <kbd>Home</kbd> switch weapon<br>
     <b>Buildings:</b> <kbd>E</kbd> enter (night only)<br>
@@ -229,7 +231,10 @@
 
   // Roads
   const roads = new THREE.Group();
-  const roadMat = new THREE.MeshLambertMaterial({color:0x1a1f25});
+  const roadMat = new THREE.MeshStandardMaterial({color:0x1e2328, roughness:0.95});
+  const sidewalkMat = new THREE.MeshStandardMaterial({color:0x8a8f96, roughness:0.9});
+  const lineWhiteMat = new THREE.MeshBasicMaterial({color:0xe8e8e0});
+  const lineYellowMat = new THREE.MeshBasicMaterial({color:0xe6c53a});
   
   for(let i=-8;i<=8;i++){
     const r1 = new THREE.Mesh(new THREE.BoxGeometry(600,0.1,4), roadMat); 
@@ -241,18 +246,69 @@
     r2.position.set(i*30,0.01,0); 
     r2.receiveShadow = true;
     roads.add(r2);
+
+    // Sidewalks flanking each road strip
+    [-2.6, 2.6].forEach(off=>{
+      const sw1 = new THREE.Mesh(new THREE.BoxGeometry(600,0.14,1.1), sidewalkMat);
+      sw1.position.set(0,0.02,i*30+off); sw1.receiveShadow = true;
+      roads.add(sw1);
+      const sw2 = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.14,600), sidewalkMat);
+      sw2.position.set(i*30+off,0.02,0); sw2.receiveShadow = true;
+      roads.add(sw2);
+    });
+
+    // Yellow dashed center line + white edge lines on the horizontal strip
+    for(let d=-290;d<290;d+=8){
+      const dash = new THREE.Mesh(new THREE.BoxGeometry(4,0.11,0.25), lineYellowMat);
+      dash.position.set(d,0.02,i*30);
+      roads.add(dash);
+    }
+    [-1.7,1.7].forEach(off=>{
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(600,0.11,0.12), lineWhiteMat);
+      edge.position.set(0,0.02,i*30+off);
+      roads.add(edge);
+    });
   }
   scene.add(roads);
+
+  // Streetlights along the roads for that GTA-style night skyline
+  const streetlights = new THREE.Group();
+  const poleMat = new THREE.MeshStandardMaterial({color:0x2a2d31, roughness:0.6, metalness:0.5});
+  const lampMat = new THREE.MeshStandardMaterial({color:0xfff2c2, emissive:0xffdd88, emissiveIntensity:0.0, roughness:0.4});
+  const streetlightLamps = [];
+  for(let i=-6;i<=6;i+=2){
+    for(let side of [-1,1]){
+      const pole = new THREE.Group();
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.1,4.5,8), poleMat);
+      post.position.y = 2.25; post.castShadow = true;
+      pole.add(post);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.08,0.08), poleMat);
+      arm.position.set(side*0.6, 4.4, 0);
+      pole.add(arm);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.16,8,8), lampMat.clone());
+      lamp.position.set(side*1.15, 4.3, 0);
+      pole.add(lamp);
+      streetlightLamps.push(lamp);
+      pole.position.set(i*30 + side*3.4, 0, rand(-260,260));
+      streetlights.add(pole);
+    }
+  }
+  scene.add(streetlights);
 
   // Enhanced Buildings
   const city = new THREE.Group(); 
   scene.add(city);
   const houses = [];
   const allBuildings = [];
+  const buildingWindows = [];
   
+  // Vice City / San Andreas-flavored building palette — warm pastels and
+  // sun-bleached earth tones instead of random desaturated grays.
+  const skylinePalette = [0xe8c9a8,0xd88a8a,0x7fb6c9,0xe0c46b,0xc98fb0,0xb5cf9a,0xd9a05b,0xa9c6d8];
   function makeBuilding(x,z,isHouse=false){
     const w=rand(8,15), d=rand(8,15), h=rand(10,25);
-    const col = new THREE.Color().setHSL(rand(0,1),0.3,rand(0.3,0.6));
+    const col = new THREE.Color(skylinePalette[Math.floor(rand(0,skylinePalette.length))]);
+    col.offsetHSL(rand(-0.03,0.03), 0, rand(-0.08,0.08));
     
     // Enhanced house colors for visibility
     if(isHouse){
@@ -267,8 +323,10 @@
     
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(w,h,d), 
-      new THREE.MeshLambertMaterial({
+      new THREE.MeshStandardMaterial({
         color:col,
+        roughness:0.82,
+        metalness:0.05,
         transparent: !isNight,
         opacity: isNight ? 0.8 : 1.0
       })
@@ -286,6 +344,22 @@
     };
     city.add(body);
     allBuildings.push(body);
+
+    // Rooftop parapet rim + AC/vent boxes for skyline silhouette (office towers only)
+    if(!isHouse){
+      const parapetMat = new THREE.MeshStandardMaterial({color: col.clone().offsetHSL(0,0,-0.1), roughness:0.85});
+      const parapet = new THREE.Mesh(new THREE.BoxGeometry(w+0.3,0.6,d+0.3), parapetMat);
+      parapet.position.set(x, h+0.3, z);
+      parapet.castShadow = true;
+      city.add(parapet);
+      const acUnits = Math.floor(rand(1,4));
+      for(let u=0;u<acUnits;u++){
+        const ac = new THREE.Mesh(new THREE.BoxGeometry(rand(1,2),rand(0.6,1.1),rand(1,2)), new THREE.MeshStandardMaterial({color:0x555b60, roughness:0.7, metalness:0.3}));
+        ac.position.set(x+rand(-w/3,w/3), h+0.6+ac.geometry.parameters.height/2, z+rand(-d/3,d/3));
+        ac.castShadow = true;
+        city.add(ac);
+      }
+    }
     
     // Enhanced door with colors
     const doorColor = isHouse && col.getHex() === 0xffffff ? 0x0000ff : 0x4a3728;
@@ -298,18 +372,21 @@
     city.add(door);
     
     // Windows
-    const windowMat = new THREE.MeshLambertMaterial({
+    const windowMat = new THREE.MeshStandardMaterial({
       color:0x87ceeb, 
       emissive:0x1a3350, 
-      emissiveIntensity:0.0
+      emissiveIntensity:0.0,
+      roughness:0.3
     });
     
     for(let i=1;i<h/3;i++){
       for(let j=-Math.floor(w/3);j<=Math.floor(w/3);j++){
         if(Math.abs(j)>Math.floor(w/3)-1) continue;
-        const win = new THREE.Mesh(new THREE.BoxGeometry(1,1,0.2), windowMat);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(1,1,0.2), windowMat.clone());
         win.position.set(x + j*2.5, i*3, z + d/2 + 0.11);
+        win.userData.lit = Math.random() < 0.4;
         city.add(win);
+        buildingWindows.push(win);
       }
     }
 
@@ -399,27 +476,52 @@
     makeBuilding(x,z, makeHouse);
   }
 
-  // Enhanced Trees
+  // Enhanced Trees — round leafy trees mixed with palms for a coastal GTA feel
   const vegetation = new THREE.Group();
-  for(let i=0;i<50;i++){
-    const tree = new THREE.Group();
-    
-    const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.25,0.4,5,8),
-      new THREE.MeshLambertMaterial({color:0x4a3728})
-    );
-    trunk.position.y = 2.5;
+  function makePalm(){
+    const palm = new THREE.Group();
+    const trunkMat = new THREE.MeshStandardMaterial({color:0x6b5335, roughness:0.9});
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.3,6.5,7), trunkMat);
+    trunk.position.y = 3.25;
+    trunk.rotation.z = rand(-0.06,0.06);
     trunk.castShadow = true;
+    palm.add(trunk);
+    const frondMat = new THREE.MeshStandardMaterial({color:0x2f8f4e, roughness:0.75, side:THREE.DoubleSide});
+    for(let f=0; f<6; f++){
+      const frond = new THREE.Mesh(new THREE.ConeGeometry(0.35, 2.6, 4), frondMat);
+      frond.position.y = 6.6;
+      frond.rotation.z = Math.PI/2.1;
+      frond.rotation.y = (f/6) * Math.PI*2;
+      frond.position.x = Math.sin((f/6)*Math.PI*2) * 1.1;
+      frond.position.z = Math.cos((f/6)*Math.PI*2) * 1.1;
+      frond.castShadow = true;
+      palm.add(frond);
+    }
+    return palm;
+  }
+  for(let i=0;i<50;i++){
+    const usePalm = Math.random() < 0.4;
+    let tree;
+    if(usePalm){
+      tree = makePalm();
+    } else {
+      tree = new THREE.Group();
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25,0.4,5,8),
+        new THREE.MeshStandardMaterial({color:0x4a3728, roughness:0.9})
+      );
+      trunk.position.y = 2.5;
+      trunk.castShadow = true;
+      const leaves = new THREE.Mesh(
+        new THREE.SphereGeometry(2.5,8,6),
+        new THREE.MeshStandardMaterial({color:0x2e8b3a, roughness:0.85})
+      );
+      leaves.position.y = 6;
+      leaves.castShadow = true;
+      leaves.receiveShadow = true;
+      tree.add(trunk, leaves);
+    }
     
-    const leaves = new THREE.Mesh(
-      new THREE.SphereGeometry(2.5,8,6),
-      new THREE.MeshLambertMaterial({color:0x228b22})
-    );
-    leaves.position.y = 6;
-    leaves.castShadow = true;
-    leaves.receiveShadow = true;
-    
-    tree.add(trunk, leaves);
     tree.position.set(rand(-280,280), 0, rand(-280,280));
     
     // Avoid roads and buildings
@@ -1126,6 +1228,10 @@
       applyLighting();
       
       addKillMessage(isNight ? 'Night falls... Zombies coming!' : 'Dawn breaks! Zombies retreat!');
+
+      if(mission && mission.type === 'survive' && isNight !== mission.startNight){
+        completeMission();
+      }
     }
   }
   
@@ -1152,6 +1258,9 @@
     // Update UI
     const timeIcon = document.getElementById('timeIcon');
     const dayNightTxt = document.getElementById('dayNightTxt');
+
+    streetlightLamps.forEach(l => { l.material.emissiveIntensity = isNight ? 1.4 : 0.0; });
+    buildingWindows.forEach(w => { w.material.emissiveIntensity = (isNight && w.userData.lit) ? 0.9 : 0.0; });
     
     if(isNight){
       timeIcon.className = 'time-icon night-icon';
@@ -1171,6 +1280,74 @@
   }
   
   applyLighting();
+  startMission();
+
+  // Mission System — lightweight GTA-style contracts that cycle automatically.
+  // Kill contracts track player kills; delivery missions drop a glowing marker
+  // you drive a vehicle to; survive missions ask you to live through a
+  // day/night flip. Completing one pays out a time bonus and starts the next.
+  const missionMarkers = new THREE.Group();
+  scene.add(missionMarkers);
+  let mission = null;
+
+  function clearMissionMarker(){
+    missionMarkers.clear();
+  }
+
+  function updateMissionUI(){
+    const el = document.getElementById('missionTxt');
+    if(!el) return;
+    if(!mission){ el.textContent = '—'; return; }
+    if(mission.type === 'kill'){
+      el.textContent = `${mission.label} (${mission.progress}/${mission.target})`;
+    } else {
+      el.textContent = mission.label;
+    }
+  }
+
+  function completeMission(){
+    if(!mission) return;
+    playerTimer = Math.min(600, playerTimer + 60);
+    addKillMessage('Mission complete! +60s bonus');
+    clearMissionMarker();
+    mission = null;
+    updateMissionUI();
+    setTimeout(startMission, 4000);
+  }
+
+  function startMission(){
+    clearMissionMarker();
+    const types = ['kill','deliver','survive'];
+    const type = types[Math.floor(rand(0,types.length))];
+
+    if(type === 'kill'){
+      const target = Math.floor(rand(3,7));
+      mission = {type, target, progress:0, label:`Eliminate ${target} hostiles`};
+    } else if(type === 'deliver'){
+      const pos = new THREE.Vector3(rand(-180,180), 0, rand(-180,180));
+      const marker = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.1,1.1,3.5,14,1,true),
+        new THREE.MeshBasicMaterial({color:0xffcc00, transparent:true, opacity:0.35, side:THREE.DoubleSide})
+      );
+      marker.position.copy(pos); marker.position.y = 1.75;
+      missionMarkers.add(marker);
+      mission = {type, target:pos, progress:0, label:'Deliver a vehicle to the yellow marker', marker};
+    } else {
+      mission = {type, target:1, progress:0, label:'Survive until the cycle changes', startNight:isNight};
+    }
+    updateMissionUI();
+    addKillMessage('New mission: ' + mission.label);
+  }
+
+  function missionUpdate(dt){
+    if(!mission) return;
+    if(mission.type === 'deliver'){
+      mission.marker.rotation.y += dt * 0.8;
+      if(onCar && currentCar && currentCar.visible && currentCar.position.distanceTo(mission.target) < 6){
+        completeMission();
+      }
+    }
+  }
 
   // Input System
   const keys={};
@@ -1406,6 +1583,11 @@
     if(killer === 'player'){
       playerTimer = Math.min(playerTimer + timeGain, 600); // Max 10 minutes
       addKillMessage(message);
+      if(mission && mission.type === 'kill'){
+        mission.progress++;
+        updateMissionUI();
+        if(mission.progress >= mission.target) completeMission();
+      }
     }
   }
 
@@ -2301,6 +2483,11 @@
       const color = p.userData.type === 'health' ? '#ff4444' : '#44ff44';
       drawCircle(p.position.x, p.position.z, 1, color);
     });
+
+    // Mission marker
+    if(mission && mission.type === 'deliver'){
+      drawCircle(mission.target.x, mission.target.z, 4, '#ffcc00');
+    }
     
     mctx.restore();
   }
@@ -2347,10 +2534,12 @@
     bulletsUpdate(dt);
     rocketsUpdate(dt);
     explosionsUpdate(dt);
+    muzzleFlashUpdate(dt);
     updatePickups(dt);
     
     // UI and timer
     tickTimer(dt);
+    missionUpdate(dt);
     updateBars();
     drawMinimap();
     
