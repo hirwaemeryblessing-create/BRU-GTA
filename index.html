@@ -76,6 +76,7 @@
     <div class="row"><div>Health</div><div id="hpTxt">100%</div></div>
     <div class="bar ok"><div id="hpbar" style="width: 100%;"></div></div>
     <div class="row"><div>Kills</div><div id="killsTxt">0</div></div>
+    <div class="row"><div>Wanted</div><div id="wantedTxt" style="color:#ffcc44">Clean</div></div>
     <div class="row" style="align-items:flex-start"><div>Mission</div><div id="missionTxt" style="text-align:right;max-width:150px;font-size:12px">—</div></div>
   </div>
   <div class="card" id="weapon">
@@ -188,7 +189,7 @@
   let inHouse = false, currentHouseIndex = -1;
   let inHeli = false, currentHeli = null;
   let weapon = 'rifle';
-  let rocketCooldown = 0;
+  let weaponCooldown = 0;
   let crouching = false;
   let fireKick = 0; // decaying recoil offset applied to the gun arm
 
@@ -711,7 +712,7 @@
     elbowA.add(weaponAnchor);
 
     g.userData = {
-      torso,legA,legB,armA,armB,kneeA,kneeB,elbowA,elbowB,head,weaponAnchor,walkT:0,
+      torso,legA,legB,armA,armB,kneeA,kneeB,elbowA,elbowB,head,hair,pelvis,neck,weaponAnchor,walkT:0,
       hw:0.32, hh:1.3, hd:0.28, alive:true, type:'humanoid'
     };
     return g;
@@ -753,33 +754,87 @@
   player.position.set(0,0,8); 
   scene.add(player);
 
-  // Enhanced Weapons
+  // Enhanced Weapons — 6 distinct types, each with its own model and stats
+  const gunMetal = new THREE.MeshStandardMaterial({color:0x1a1f24, roughness:0.5, metalness:0.6});
+  const gunMetalLight = new THREE.MeshStandardMaterial({color:0x3a3f44, roughness:0.4, metalness:0.7});
+
+  function makePistol(){
+    const gun = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.32,0.16,0.13), gunMetal);
+    body.position.set(0.1,0,0); body.castShadow = true;
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.07,0.07), gunMetalLight);
+    barrel.position.set(0.32,0.02,0); barrel.castShadow = true;
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.22,0.11), gunMetal);
+    grip.position.set(-0.05,-0.15,0); grip.rotation.z = 0.25; grip.castShadow = true;
+    gun.add(body,barrel,grip);
+    gun.rotation.z = -Math.PI/10;
+    return gun;
+  }
+  function makeSMG(){
+    const gun = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.14,0.13), gunMetal);
+    body.position.set(0.15,0,0); body.castShadow = true;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.4,8), gunMetalLight);
+    barrel.rotation.z = Math.PI/2; barrel.position.set(0.55,0,0); barrel.castShadow = true;
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.3,0.1), gunMetal);
+    mag.position.set(0.1,-0.2,0); mag.rotation.z = -0.15; mag.castShadow = true;
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.08,0.08), gunMetal);
+    stock.position.set(-0.32,-0.02,0); stock.castShadow = true;
+    gun.add(body,barrel,mag,stock);
+    gun.rotation.z = -Math.PI/9;
+    return gun;
+  }
+  function makeShotgun(){
+    const gun = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.15,0.15), new THREE.MeshStandardMaterial({color:0x4a3222, roughness:0.7}));
+    body.position.set(0.05,0,0); body.castShadow = true;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.75,10), gunMetalLight);
+    barrel.rotation.z = Math.PI/2; barrel.position.set(0.55,0.02,0); barrel.castShadow = true;
+    const pump = new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.28,8), gunMetal);
+    pump.rotation.z = Math.PI/2; pump.position.set(0.35,-0.06,0); pump.castShadow = true;
+    gun.add(body,barrel,pump);
+    gun.rotation.z = -Math.PI/8;
+    return gun;
+  }
   function makeAssaultRifle(){
     const gun = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(1.0,0.15,0.2), 
-      new THREE.MeshLambertMaterial({color:0x1a1f24})
+      gunMetal
     );
     body.position.set(0.25,0,0);
     body.castShadow = true;
     
     const barrel = new THREE.Mesh(
       new THREE.BoxGeometry(0.6,0.1,0.1), 
-      new THREE.MeshLambertMaterial({color:0x2a2f34})
+      gunMetalLight
     );
     barrel.position.set(0.7,0,0);
     barrel.castShadow = true;
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.32,0.11), gunMetal);
+    mag.position.set(0.15,-0.22,0); mag.rotation.z = -0.2; mag.castShadow = true;
     
-    gun.add(body,barrel); 
+    gun.add(body,barrel,mag); 
     gun.rotation.z = -Math.PI/8; 
     return gun;
   }
-  
+  function makeSniper(){
+    const gun = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.13,0.13), new THREE.MeshStandardMaterial({color:0x2a2e22, roughness:0.6}));
+    body.position.set(0.2,0,0); body.castShadow = true;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.9,10), gunMetalLight);
+    barrel.rotation.z = Math.PI/2; barrel.position.set(0.85,0,0); barrel.castShadow = true;
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,0.4,10), gunMetal);
+    scope.rotation.z = Math.PI/2; scope.position.set(0.2,0.14,0); scope.castShadow = true;
+    gun.add(body,barrel,scope);
+    gun.rotation.z = -Math.PI/9;
+    return gun;
+  }
   function makeRocketLauncher(){
     const rl = new THREE.Group();
     const tube = new THREE.Mesh(
       new THREE.CylinderGeometry(0.12,0.12,1.2,10), 
-      new THREE.MeshLambertMaterial({color:0x2a3d2a})
+      new THREE.MeshStandardMaterial({color:0x2a3d2a, roughness:0.7})
     );
     tube.rotation.z = Math.PI/2; 
     tube.position.x = 0.5;
@@ -789,16 +844,37 @@
     rl.rotation.z = -Math.PI/12; 
     return rl;
   }
-  
-  const assaultRifleModel = makeAssaultRifle();
-  const rocketLauncherModel = makeRocketLauncher();
-  player.userData.weaponAnchor.add(assaultRifleModel);
+
+  // Stats & model per weapon type — dmg per hit, rate = seconds between shots,
+  // bulletSpeed in units/sec (fast, snappy shots), spread = random aim jitter
+  // in radians, pellets = shots fired per trigger pull (shotgun sprays several).
+  const WEAPON_DEFS = {
+    pistol:  {label:'Pistol',   dmg:22, rate:0.28, bulletSpeed:150, spread:0.008, pellets:1, model:null},
+    smg:     {label:'SMG',      dmg:11, rate:0.07, bulletSpeed:140, spread:0.035, pellets:1, model:null},
+    shotgun: {label:'Shotgun',  dmg:13, rate:0.75, bulletSpeed:120, spread:0.11,  pellets:6, model:null},
+    rifle:   {label:'Rifle',    dmg:24, rate:0.13, bulletSpeed:160, spread:0.02,  pellets:1, model:null},
+    sniper:  {label:'Sniper',   dmg:95, rate:1.1,  bulletSpeed:260, spread:0.001, pellets:1, model:null},
+    launcher:{label:'Launcher', dmg:0,  rate:1.6,  bulletSpeed:35,  spread:0,     pellets:1, model:null, isRocket:true}
+  };
+  WEAPON_DEFS.pistol.model = makePistol();
+  WEAPON_DEFS.smg.model = makeSMG();
+  WEAPON_DEFS.shotgun.model = makeShotgun();
+  WEAPON_DEFS.rifle.model = makeAssaultRifle();
+  WEAPON_DEFS.sniper.model = makeSniper();
+  WEAPON_DEFS.launcher.model = makeRocketLauncher();
+  const WEAPON_ORDER = ['pistol','smg','shotgun','rifle','sniper','launcher'];
+
+  player.userData.weaponAnchor.add(WEAPON_DEFS.rifle.model);
   
   function setWeapon(name){
     weapon = name;
-    document.getElementById('wepName').textContent = (weapon==='rifle')?'Rifle':'Launcher';
+    document.getElementById('wepName').textContent = WEAPON_DEFS[weapon].label;
     player.userData.weaponAnchor.clear();
-    player.userData.weaponAnchor.add(weapon==='rifle'?assaultRifleModel:rocketLauncherModel);
+    player.userData.weaponAnchor.add(WEAPON_DEFS[weapon].model);
+  }
+  function cycleWeapon(){
+    const idx = WEAPON_ORDER.indexOf(weapon);
+    setWeapon(WEAPON_ORDER[(idx+1) % WEAPON_ORDER.length]);
   }
 
   // Enhanced Vehicles — realistic GTA-style proportions: tapered chassis with a
@@ -924,37 +1000,58 @@
   
   const cars = new THREE.Group(); 
   scene.add(cars);
-  const carColors=[0x33aa66,0xcc6666,0x6699cc,0xccaa44,0xaa66cc,0x66cccc];
+  const carColors=[0x33aa66,0xcc6666,0x6699cc,0xccaa44,0xaa66cc,0x66cccc,0xffffff,0x222831,0xd88a3f];
   
-  for(let i=0;i<12;i++){
-    const carType = Math.random() < 0.3 ? 'truck' : 'sedan';
+  for(let i=0;i<45;i++){
+    const carType = Math.random() < 0.25 ? 'truck' : 'sedan';
     const car=makeCar(carColors[i%carColors.length], carType);
     let placed = false;
     let attempts = 0;
     
     while(!placed && attempts < 50){
-      const x = rand(-150,150);
-      const z = rand(-150,150);
-      
-      if(Math.abs(x % 30) < 8 || Math.abs(z % 30) < 8){
-        car.position.set(x,0,z);
-        
-        let tooClose = false;
-        for(let building of allBuildings){
-          if(dist2(car.position, building.position) < 80){
-            tooClose = true;
-            break;
-          }
+      // Snap onto an actual road lane (roads sit on multiples of 30) so
+      // traffic reads as driving on the street, not scattered randomly
+      const horizontal = Math.random() < 0.5;
+      const laneIndex = Math.floor(rand(-8,9));
+      const laneOffset = (Math.random()<0.5 ? -0.9 : 0.9); // pick a lane side
+      let x,z,yaw;
+      if(horizontal){
+        x = rand(-280,280);
+        z = laneIndex*30 + laneOffset;
+        yaw = Math.random()<0.5 ? Math.PI/2 : -Math.PI/2;
+      } else {
+        x = laneIndex*30 + laneOffset;
+        z = rand(-280,280);
+        yaw = Math.random()<0.5 ? 0 : Math.PI;
+      }
+      car.position.set(x,0,z);
+      car.rotation.y = yaw;
+      car.userData.yaw = yaw;
+
+      let tooClose = false;
+      for(let building of allBuildings){
+        if(dist2(car.position, building.position) < 80){
+          tooClose = true;
+          break;
         }
-        
-        if(!tooClose && dist2(car.position, player.position) > 200) {
-          cars.add(car);
-          placed = true;
-        }
+      }
+
+      if(!tooClose && dist2(car.position, player.position) > 200) {
+        cars.add(car);
+        placed = true;
       }
       attempts++;
     }
   }
+
+  // Give a chunk of the parked cars an ambient "traffic" driver so the
+  // streets have moving cars right away, not just when AI wander into one
+  cars.children.forEach(car => {
+    if(Math.random() < 0.4){
+      car.userData.driver = 'traffic';
+      car.userData.speed = rand(4,9);
+    }
+  });
 
   // Enhanced Helicopter — realistic tapered fuselage, a real glass cockpit
   // bubble, skids on struts, a tail boom that narrows into a fin, and a
@@ -1139,6 +1236,7 @@
       };
       
       const ai=makeHumanoid(colors, 'tactical');
+      ai.userData.weaponAnchor.add(makeAssaultRifle());
       let placed = false;
       let attempts = 0;
       
@@ -1173,13 +1271,101 @@
       ai.userData.alive=true;
       ai.userData.hp=rand(40,80);
       ai.userData.timer=rand(60,180); // More time for AI
-      ai.userData.speed=rand(2,3);
+      ai.userData.speed=rand(2.6,3.8);
       ai.userData.team = (Math.random()<0.5)?'red':'blue';
       ai.userData.lastShot = 0;
       ai.userData.inVehicle = false;
     }
   }
   spawnAI();
+
+  // Ghosts — flying, semi-transparent night creatures. They ignore gravity
+  // (bob up and down at head height or above), phase silently toward the
+  // player when close, and drain a little health with a spooky chill rather
+  // than being shot down (fitting a ghost — nothing solid to hit).
+  const ghosts = new THREE.Group();
+  scene.add(ghosts);
+  const ghostMat = new THREE.MeshStandardMaterial({
+    color:0xdfe8ff, transparent:true, opacity:0.5,
+    emissive:0x8fb0ff, emissiveIntensity:0.5, roughness:0.4
+  });
+  const ghostEyeMat = new THREE.MeshBasicMaterial({color:0x14162a});
+
+  function makeGhost(){
+    const g = new THREE.Group();
+    const mat = ghostMat.clone();
+    const robe = new THREE.Mesh(new THREE.ConeGeometry(0.42,1.3,12,1,true), mat);
+    robe.position.y = 0.85;
+    robe.castShadow = false;
+    g.add(robe);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.27,14,10), mat);
+    head.position.y = 1.65;
+    g.add(head);
+    const eyeGeo = new THREE.SphereGeometry(0.04,6,6);
+    const eyeL = new THREE.Mesh(eyeGeo, ghostEyeMat); eyeL.position.set(-0.09,1.68,0.22); g.add(eyeL);
+    const eyeR = new THREE.Mesh(eyeGeo, ghostEyeMat); eyeR.position.set(0.09,1.68,0.22); g.add(eyeR);
+    // A couple of trailing wisps for a floating, tattered-robe silhouette
+    for(let w=0; w<3; w++){
+      const wisp = new THREE.Mesh(new THREE.ConeGeometry(0.1,0.5,6), mat);
+      wisp.position.set((w-1)*0.2, 0.25, 0);
+      wisp.rotation.x = Math.PI;
+      g.add(wisp);
+    }
+    g.userData = {
+      type:'ghost', alive:true, hp:9999, speed:rand(2.8,4.2),
+      bobT:Math.random()*Math.PI*2, baseY:0, lastMoan:0, mat
+    };
+    return g;
+  }
+
+  function spawnGhosts(){
+    for(let i=0;i<7;i++){
+      const gh = makeGhost();
+      const x = rand(-220,220), z = rand(-220,220);
+      const y = rand(2.5,7); // flies well above head height
+      gh.position.set(x,y,z);
+      gh.userData.baseY = y;
+      if(dist2(gh.position, player.position) > 500){
+        ghosts.add(gh);
+      }
+    }
+  }
+
+  function despawnGhosts(){
+    ghosts.clear();
+  }
+
+  function ghostsThink(dt){
+    ghosts.children.forEach((gh, index) => {
+      if(!gh.userData.alive) return;
+      gh.userData.bobT += dt * 1.4;
+      gh.position.y = gh.userData.baseY + Math.sin(gh.userData.bobT) * 0.7;
+
+      const dx = player.position.x - gh.position.x;
+      const dz = player.position.z - gh.position.z;
+      const d = Math.hypot(dx,dz);
+
+      if(d < 35){
+        // Drift toward the player, ignoring buildings entirely (it flies)
+        gh.rotation.y = Math.atan2(dx,dz);
+        const speed = gh.userData.speed * dt;
+        gh.position.x += Math.sin(gh.rotation.y) * speed;
+        gh.position.z += Math.cos(gh.rotation.y) * speed;
+        if(d < 2.2 && !onCar && !inHeli && Math.random() < 0.02){
+          playerHP = Math.max(0, playerHP - 8);
+          updateBars();
+          addKillMessage('A ghost chills you! -8 HP');
+          if(playerHP <= 0) showGameOver();
+        }
+      } else {
+        gh.rotation.y += dt * 0.25; // idle drift when nobody's nearby
+      }
+
+      // Gentle pulse so they read as ethereal rather than static meshes
+      const pulse = 0.4 + Math.sin(performance.now()*0.002 + index) * 0.12;
+      gh.userData.mat.opacity = pulse;
+    });
+  }
 
   function spawnNightZombies(){
     for(let i=0;i<15;i++){
@@ -1192,7 +1378,7 @@
       });
       z.userData.zombie=true; 
       z.userData.hp=rand(30,50); 
-      z.userData.speed=rand(3,4); 
+      z.userData.speed=rand(3.5,5); 
       z.userData.alive=true;
       z.userData.lastAttack = 0;
       
@@ -1266,10 +1452,12 @@
       timeIcon.className = 'time-icon night-icon';
       dayNightTxt.textContent = 'Night';
       if(zombies.children.length === 0) spawnNightZombies();
+      if(ghosts.children.length === 0) spawnGhosts();
     } else {
       timeIcon.className = 'time-icon day-icon';
       dayNightTxt.textContent = 'Day';
       despawnZombies();
+      despawnGhosts();
     }
   }
   
@@ -1350,11 +1538,86 @@
 
   startMission();
 
+  // Wanted / Police System — killing civilians, roadkill while driving, or
+  // shooting police raises "chaos heat". Heat decays over time; while it's
+  // above zero, police officers spawn near the player, chase, and shoot.
+  let wantedLevel = 0;
+  let chaosHeat = 0;
+  let policeSpawnTimer = 0;
+  const policeUnits = new THREE.Group();
+  scene.add(policeUnits);
+
+  function addChaos(amount){
+    chaosHeat = Math.min(320, chaosHeat + amount);
+  }
+
+  function updateWanted(dt){
+    chaosHeat = Math.max(0, chaosHeat - dt*3.5);
+    const newLevel = chaosHeat > 220 ? 3 : chaosHeat > 110 ? 2 : chaosHeat > 25 ? 1 : 0;
+    if(newLevel > wantedLevel) addKillMessage('Wanted level up! ' + '★'.repeat(newLevel));
+    if(newLevel === 0 && wantedLevel > 0) addKillMessage('Police lost interest.');
+    wantedLevel = newLevel;
+    const el = document.getElementById('wantedTxt');
+    if(el) el.textContent = wantedLevel > 0 ? '★'.repeat(wantedLevel) + '☆'.repeat(3-wantedLevel) : 'Clean';
+  }
+
+  function spawnPoliceUnit(){
+    const officer = makeHumanoid({
+      shirt:0x1c3a6b, pants:0x14161b, sleeve:0x1c3a6b, hair:0x0a0a0a, skin:0xcf9e78
+    }, 'police');
+    officer.userData.alive = true;
+    officer.userData.hp = 65;
+    officer.userData.isPolice = true;
+    officer.userData.speed = rand(3.2,4);
+    officer.userData.lastShot = 0;
+    officer.userData.weaponAnchor.add(makePistol());
+    const angle = rand(0, Math.PI*2), dist = rand(28,45);
+    officer.position.set(player.position.x + Math.sin(angle)*dist, 0, player.position.z + Math.cos(angle)*dist);
+    policeUnits.add(officer);
+  }
+
+  function policeThink(dt){
+    policeSpawnTimer -= dt;
+    const activeCount = policeUnits.children.filter(c=>c.userData.alive).length;
+    if(wantedLevel > 0 && policeSpawnTimer <= 0 && activeCount < wantedLevel * 3){
+      spawnPoliceUnit();
+      policeSpawnTimer = 2.5;
+    }
+
+    policeUnits.children.forEach((cop, index) => {
+      if(!cop.userData.alive) return;
+      if(wantedLevel <= 0){
+        cop.userData.alive = false;
+        cop.visible = false;
+        return;
+      }
+      const dx = player.position.x - cop.position.x;
+      const dz = player.position.z - cop.position.z;
+      const d = Math.hypot(dx,dz);
+      cop.rotation.y = Math.atan2(dx,dz);
+      if(d > 4){
+        const speed = cop.userData.speed * dt;
+        cop.position.x += Math.sin(cop.rotation.y)*speed;
+        cop.position.z += Math.cos(cop.rotation.y)*speed;
+        resolveBuildingCollision(cop.position, 0.32);
+      }
+      const now = performance.now();
+      if(now - cop.userData.lastShot > 700 && d < 40){
+        cop.userData.lastShot = now;
+        const muzzle = cop.userData.weaponAnchor.getWorldPosition(new THREE.Vector3());
+        const dir = new THREE.Vector3(Math.sin(cop.rotation.y),0,Math.cos(cop.rotation.y));
+        spawnBullet(muzzle, dir, 100, 12, 'police');
+      }
+      const t = performance.now()*0.001*3 + index;
+      animateGait(cop.userData, t, d>4?0.6:0.15, {aimingArmA:true});
+    });
+  }
+
   // Input System
   const keys={};
   document.addEventListener('keydown',(e)=>{
     keys[e.code]=true;
-    if(e.code==='Home' || e.code==='KeyH') setWeapon(weapon==='rifle'?'launcher':'rifle');
+    if(e.code==='Home' || e.code==='KeyH') cycleWeapon();
     if(e.code==='KeyE') contextAction();
     if(e.code==='Digit5'){ 
       const el=document.getElementById('controls'); 
@@ -1521,6 +1784,7 @@
     const damageTargets = [
       ...aiArmy.children.filter(ai => ai.userData.alive),
       ...zombies.children.filter(z => z.userData.alive),
+      ...policeUnits.children.filter(p => p.userData.alive),
       ...cars.children.filter(c => c.visible),
       ...helis.children.filter(h => h.visible)
     ];
@@ -1575,6 +1839,9 @@
     if(target.userData.zombie){
       timeGain = 30; // Increased zombie time bonus
       message = `Zombie killed! +${timeGain}s`;
+    } else if(target.userData.isPolice){
+      timeGain = 20;
+      message = `Officer down! +${timeGain}s`;
     } else {
       timeGain = Math.floor(target.userData.timer || 0);
       const teamColor = target.userData.team === 'red' ? 'Red' : 'Blue';
@@ -1584,6 +1851,9 @@
     if(killer === 'player'){
       playerTimer = Math.min(playerTimer + timeGain, 600); // Max 10 minutes
       addKillMessage(message);
+      if(!target.userData.zombie){
+        addChaos(target.userData.isPolice ? 45 : 20);
+      }
       if(mission && mission.type === 'kill'){
         mission.progress++;
         updateMissionUI();
@@ -1606,17 +1876,27 @@
 
   // Fire System
   function fire(){
+    if(weaponCooldown > 0) return;
+    const def = WEAPON_DEFS[weapon];
     const muzzlePos = player.userData.weaponAnchor.getWorldPosition(new THREE.Vector3());
     const forward = new THREE.Vector3(); 
     camera.getWorldDirection(forward); 
     
-    if(weapon === 'rifle'){
-      spawnBullet(muzzlePos, forward, onCar || inHeli ? 40 : 50, 20, 'player');
+    if(def.isRocket){
+      spawnRocket(muzzlePos, forward, def.bulletSpeed, 200, 5, 'player'); 
     } else {
-      if(rocketCooldown > 0) return;
-      spawnRocket(muzzlePos, forward, 25, 200, 5, 'player'); 
-      rocketCooldown = 3.0;
+      for(let p=0; p<def.pellets; p++){
+        const dir = forward.clone();
+        if(def.spread > 0){
+          dir.x += rand(-def.spread, def.spread);
+          dir.y += rand(-def.spread, def.spread);
+          dir.z += rand(-def.spread, def.spread);
+          dir.normalize();
+        }
+        spawnBullet(muzzlePos, dir, onCar || inHeli ? def.bulletSpeed*0.8 : def.bulletSpeed, def.dmg, 'player');
+      }
     }
+    weaponCooldown = def.rate;
     if(!onCar && !inHeli){
       spawnMuzzleFlash(muzzlePos);
       fireKick = 0.3; // arm/gun kicks up briefly, decays each frame
@@ -1701,6 +1981,7 @@
           const speed = ai.userData.speed * dt;
           ai.position.x += Math.sin(ai.rotation.y) * speed;
           ai.position.z += Math.cos(ai.rotation.y) * speed;
+          resolveBuildingCollision(ai.position, 0.32);
         }
         
         // Shoot
@@ -1709,7 +1990,7 @@
           ai.userData.lastShot = now;
           const muzzle = ai.userData.weaponAnchor.getWorldPosition(new THREE.Vector3());
           const shootDir = new THREE.Vector3(Math.sin(ai.rotation.y), 0, Math.cos(ai.rotation.y));
-          spawnBullet(muzzle, shootDir, 35, 15, 'ai');
+          spawnBullet(muzzle, shootDir, 95, 15, 'ai');
         }
       } else {
         // Patrol
@@ -1717,6 +1998,7 @@
         const patrolSpeed = ai.userData.speed * 0.4 * dt;
         ai.position.x += Math.sin(ai.userData.walkT + index) * patrolSpeed;
         ai.position.z += Math.cos(ai.userData.walkT + index) * patrolSpeed;
+        resolveBuildingCollision(ai.position, 0.32);
       }
       
       // Animation
@@ -1771,6 +2053,7 @@
       const speed = z.userData.speed * dt;
       z.position.x += Math.sin(z.rotation.y) * speed;
       z.position.z += Math.cos(z.rotation.y) * speed;
+      resolveBuildingCollision(z.position, 0.32);
       
       // Attack
       const now = performance.now();
@@ -1810,7 +2093,20 @@
   // Vehicle Physics
   function carPhysics(dt){
     cars.children.forEach(car => {
-      // AI driving
+      const isTruckType = car.userData.carType === 'truck';
+      const maxSpeed = isTruckType ? 18 : 26;
+
+      // Ambient traffic: cruises straight, occasionally turns at an
+      // intersection, keeps a steady speed like normal city traffic
+      if(car.userData.driver === 'traffic'){
+        if(Math.random() < 0.004){
+          car.userData.yaw += (Math.random()<0.5 ? 1 : -1) * Math.PI/2;
+        }
+        if(car.userData.speed < 3) car.userData.speed = rand(4,7);
+        car.userData.speed = clamp(car.userData.speed, 3, maxSpeed*0.55);
+      }
+
+      // AI driving (a soldier that hijacked/entered a car)
       if(car.userData.driver === 'ai' && car.userData.aiDriver){
         const ai = car.userData.aiDriver;
         if(!ai.userData.alive){
@@ -1829,19 +2125,26 @@
         }
       }
       
-      // Player driving
+      // Player driving — real throttle/brake feel with speed-scaled steering
+      // (can't pivot in place, and full lock only kicks in once you're moving)
       if(car.userData.driver === 'player'){
-        const accel = (keys['ArrowUp'] || keys['KeyW'] ? 1 : 0) + 
-                     (keys['ArrowDown'] || keys['KeyS'] ? -0.6 : 0);
-        car.userData.speed += accel * 25 * dt;
-        car.userData.speed = clamp(car.userData.speed, -8, 
-          car.userData.carType === 'truck' ? 12 : 15);
+        const throttle = keys['ArrowUp'] || keys['KeyW'];
+        const brake = keys['ArrowDown'] || keys['KeyS'];
+        if(throttle){
+          car.userData.speed += 22 * dt;
+        } else if(brake){
+          car.userData.speed += (car.userData.speed > 0.5 ? -30 : -14) * dt;
+        } else {
+          car.userData.speed = lerp(car.userData.speed, 0, Math.min(1, 3*dt));
+        }
+        car.userData.speed = clamp(car.userData.speed, -8, maxSpeed);
         
+        const steerAuth = clamp(Math.abs(car.userData.speed)/4, 0.15, 1);
         if(keys['ArrowLeft'] || keys['KeyA']) 
-          car.userData.yaw += 1.8 * dt * Math.sign(car.userData.speed || 1);
+          car.userData.yaw += 2.0 * dt * steerAuth * Math.sign(car.userData.speed || 1);
         if(keys['ArrowRight'] || keys['KeyD']) 
-          car.userData.yaw -= 1.8 * dt * Math.sign(car.userData.speed || 1);
-      } else {
+          car.userData.yaw -= 2.0 * dt * steerAuth * Math.sign(car.userData.speed || 1);
+      } else if(car.userData.driver !== 'traffic'){
         car.userData.speed = lerp(car.userData.speed, 0, 0.05);
       }
       
@@ -1851,6 +2154,13 @@
       const vz = Math.cos(car.userData.yaw) * car.userData.speed * dt;
       car.position.x += vx;
       car.position.z += vz;
+
+      // Solid buildings: bounce the car back out and bleed off speed on impact
+      const preX = car.position.x, preZ = car.position.z;
+      resolveBuildingCollision(car.position, Math.max(car.userData.hw, car.userData.hd) * 0.55);
+      if(Math.abs(car.position.x-preX) + Math.abs(car.position.z-preZ) > 0.02){
+        car.userData.speed *= 0.35;
+      }
 
       // Spin wheels proportional to speed (realistic rolling motion)
       if(car.userData.wheels){
@@ -1862,11 +2172,11 @@
       // Collision damage
       const speedSq = car.userData.speed * car.userData.speed;
       if(speedSq > 10){
-        [...aiArmy.children, ...zombies.children].forEach(target => {
+        [...aiArmy.children, ...zombies.children, ...policeUnits.children].forEach(target => {
           if(!target.userData.alive) return;
           if(target.position.distanceTo(car.position) < 2){
-            killTarget(target, 'vehicle');
-            addKillMessage(target.userData.zombie ? 'Zombie roadkill!' : 'AI roadkill!');
+            killTarget(target, car.userData.driver === 'player' ? 'player' : 'vehicle');
+            addKillMessage(target.userData.zombie ? 'Zombie roadkill!' : 'Roadkill!');
           }
         });
       }
@@ -1997,9 +2307,28 @@
         BULLETS.splice(i, 1);
         continue;
       }
+
+      // Hit police
+      for(const cop of policeUnits.children){
+        if(!cop.userData.alive || hitTarget) continue;
+        if(cop.position.distanceTo(b.position) < 0.6){
+          cop.userData.hp -= b.userData.dmg;
+          if(cop.userData.hp <= 0){
+            killTarget(cop, b.userData.from);
+          }
+          hitTarget = true;
+          break;
+        }
+      }
+
+      if(hitTarget){
+        scene.remove(b);
+        BULLETS.splice(i, 1);
+        continue;
+      }
       
       // Hit player (if not protected by vehicle)
-      if(b.userData.from === 'ai'){
+      if(b.userData.from === 'ai' || b.userData.from === 'police'){
         if(onCar && currentCar && currentCar.visible){
           if(currentCar.position.distanceTo(b.position) < 1.8){
             currentCar.userData.hp -= b.userData.dmg * 2;
@@ -2056,7 +2385,8 @@
           ...cars.children.filter(c => c.visible),
           ...helis.children.filter(h => h.visible),
           ...aiArmy.children.filter(ai => ai.userData.alive),
-          ...zombies.children.filter(z => z.userData.alive)
+          ...zombies.children.filter(z => z.userData.alive),
+          ...policeUnits.children.filter(p => p.userData.alive)
         ];
         
         for(const target of targets){
@@ -2281,6 +2611,50 @@
 
   document.getElementById('btnNew').addEventListener('click', () => location.reload());
 
+  // Collision System — makes the world solid: nothing can walk/drive straight
+  // through a building, and the player specifically also can't clip through
+  // parked cars, helicopters, or other people. Buildings are treated as
+  // unrotated boxes (accurate, since they never rotate); everything else is
+  // approximated as a circle (fast, and close enough for a 3rd-person game).
+  function resolveBuildingCollision(pos, radius){
+    for(const b of allBuildings){
+      if(!b.visible) continue;
+      const hw = b.userData.hw, hd = b.userData.hd;
+      const dx = pos.x - b.position.x, dz = pos.z - b.position.z;
+      if(Math.abs(dx) > hw+radius || Math.abs(dz) > hd+radius) continue; // quick reject
+      const cx = clamp(dx,-hw,hw), cz = clamp(dz,-hd,hd);
+      const ddx = dx-cx, ddz = dz-cz;
+      const distSq = ddx*ddx + ddz*ddz;
+      if(distSq < radius*radius){
+        const dist = Math.sqrt(distSq) || 0.0001;
+        const overlap = radius - dist;
+        pos.x += (ddx/dist) * overlap;
+        pos.z += (ddz/dist) * overlap;
+      }
+    }
+  }
+
+  function pushFromCircle(pos, radius, ox, oz, otherRadius){
+    const dx = pos.x-ox, dz = pos.z-oz;
+    const d = Math.hypot(dx,dz);
+    const minD = radius + otherRadius;
+    if(d < minD && d > 0.0001){
+      const overlap = minD - d;
+      pos.x += (dx/d) * overlap;
+      pos.z += (dz/d) * overlap;
+    }
+  }
+
+  // Player-only: also can't walk through parked cars, helicopters, AI,
+  // zombies, or police (other characters feel "solid" instead of ghostly).
+  function resolvePlayerDynamicCollisions(pos, radius){
+    cars.children.forEach(c => { if(c.visible) pushFromCircle(pos, radius, c.position.x, c.position.z, Math.max(c.userData.hw,c.userData.hd)*0.9); });
+    helis.children.forEach(h => { if(h.visible) pushFromCircle(pos, radius, h.position.x, h.position.z, Math.max(h.userData.hw,h.userData.hd)*0.7); });
+    aiArmy.children.forEach(a => { if(a.userData.alive) pushFromCircle(pos, radius, a.position.x, a.position.z, 0.32); });
+    zombies.children.forEach(z => { if(z.userData.alive) pushFromCircle(pos, radius, z.position.x, z.position.z, 0.32); });
+    policeUnits.children.forEach(p => { if(p.userData.alive) pushFromCircle(pos, radius, p.position.x, p.position.z, 0.32); });
+  }
+
   // Player Movement
   let yVel = 0;
   let isJumping = false;
@@ -2337,9 +2711,14 @@
     // Crouch (hold C) and sprint (hold Shift) — mutually exclusive, crouch wins
     crouching = !!keys['KeyC'];
     const sprinting = !crouching && (keys['ShiftLeft'] || keys['ShiftRight']) && inputMag > 0;
-    const speed = crouching ? 2.2 : (sprinting ? 8.5 : 5);
+    const speed = crouching ? 2.2 : (sprinting ? 9.5 : 5.6);
     player.position.x += mx * speed * dt;
     player.position.z += mz * speed * dt;
+
+    // Solid world: push the player back out of buildings/cars/people instead
+    // of letting them clip straight through
+    resolveBuildingCollision(player.position, 0.36);
+    resolvePlayerDynamicCollisions(player.position, 0.36);
 
     // Crouch visually lowers the player's hips and camera
     const crouchTarget = crouching ? 0.42 : 0;
@@ -2387,12 +2766,25 @@
     const amp = moving ? gaitAmp : 0.12;
     animateGait(player.userData, t, amp, {aimingArmA:true});
 
-    // Crouch bends both knees at rest too (a real crouch, not just a slowdown)
-    const crouchBend = player.userData.crouchAmt * 1.4;
+    // Crouch = a real kneel: knees fold hard, hips/torso/head/arms physically
+    // drop instead of only rotating, and it deepens further when stationary
+    const crouchAmt = player.userData.crouchAmt;
+    const kneelExtra = (crouching && !((Math.abs(mx) + Math.abs(mz)) > 0.01)) ? 0.75 : 0;
+    const crouchBend = crouchAmt * 1.7 + kneelExtra;
     player.userData.kneeA.rotation.x += crouchBend;
     player.userData.kneeB.rotation.x += crouchBend;
-    player.userData.legA.rotation.x += player.userData.crouchAmt * 0.3;
-    player.userData.legB.rotation.x += player.userData.crouchAmt * 0.3;
+    player.userData.legA.rotation.x += crouchAmt * 0.45;
+    player.userData.legB.rotation.x += crouchAmt * 0.45;
+
+    const crouchDrop = crouchAmt * 0.5;
+    player.userData.torso.position.y = 1.36 - crouchDrop;
+    player.userData.pelvis.position.y = 0.98 - crouchDrop * 0.6;
+    player.userData.neck.position.y = 1.73 - crouchDrop;
+    player.userData.head.position.y = 2.0 - crouchDrop;
+    player.userData.hair.position.y = 2.09 - crouchDrop;
+    player.userData.armA.position.y = 1.62 - crouchDrop;
+    player.userData.armB.position.y = 1.62 - crouchDrop;
+    player.userData.torso.rotation.x = crouchAmt * 0.2; // slight forward lean
 
     document.getElementById('modeTxt').textContent = crouching ? 'Crouching' : (sprinting ? 'Sprinting' : 'On Foot');
   }
@@ -2478,6 +2870,20 @@
         drawRect(z.position.x, z.position.z, 3, 2, '#44ff44');
       }
     });
+
+    // Police
+    policeUnits.children.forEach(cop => {
+      if(cop.userData.alive){
+        drawCircle(cop.position.x, cop.position.z, 2.5, '#3a6bff');
+      }
+    });
+
+    // Ghosts
+    ghosts.children.forEach(gh => {
+      if(gh.userData.alive){
+        drawCircle(gh.position.x, gh.position.z, 2, '#cfe0ff');
+      }
+    });
     
     // Pickups
     pickups.children.forEach(p => {
@@ -2521,7 +2927,7 @@
     lastTime = currentTime;
     
     // Cooldowns
-    if(rocketCooldown > 0) rocketCooldown = Math.max(0, rocketCooldown - dt);
+    if(weaponCooldown > 0) weaponCooldown = Math.max(0, weaponCooldown - dt);
     
     // Game systems
     updateDayNightCycle(dt);
@@ -2530,6 +2936,9 @@
     heliPhysics(dt);
     aiThink(dt);
     if(isNight) zombiesThink(dt);
+    if(isNight) ghostsThink(dt);
+    updateWanted(dt);
+    policeThink(dt);
     
     // Projectiles and effects
     bulletsUpdate(dt);
