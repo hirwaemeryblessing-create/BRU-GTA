@@ -1280,7 +1280,6 @@
   }
   
   applyLighting();
-  startMission();
 
   // Mission System — lightweight GTA-style contracts that cycle automatically.
   // Kill contracts track player kills; delivery missions drop a glowing marker
@@ -1348,6 +1347,8 @@
       }
     }
   }
+
+  startMission();
 
   // Input System
   const keys={};
